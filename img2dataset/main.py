@@ -12,6 +12,7 @@ from .writer import (
     ParquetSampleWriter,
     TFRecordSampleWriter,
     DummySampleWriter,
+    MDSWriterWrapper,
 )
 from .reader import Reader
 from .downloader import Downloader
@@ -104,6 +105,7 @@ def download(
     max_shard_retry: int = 1,
     user_agent_token: Optional[str] = None,
     disallowed_header_directives: Optional[List[str]] = None,
+    newlines_in_captions: bool = False,
 ):
     """Download is the main entry point of img2dataset, it uses multiple processes and download multiple files"""
     if disallowed_header_directives is None:
@@ -128,6 +130,7 @@ def download(
     tmp_path = output_folder + "/_tmp"
     fs, tmp_dir = fsspec.core.url_to_fs(tmp_path)
     if not fs.exists(tmp_dir):
+        fs.default_tenancy = "ocid1.tenancy.oc1..aaaaaaaaa6tifnxn7uejjdx5btsgt6breq33y2tvtom7kgf75tkujpehbrha"
         fs.mkdir(tmp_dir)
 
     def signal_handler(signal_arg, frame):  # pylint: disable=unused-argument
@@ -145,6 +148,7 @@ def download(
     fs, output_path = fsspec.core.url_to_fs(output_folder)
 
     if not fs.exists(output_path):
+        fs.default_tenancy = "ocid1.tenancy.oc1..aaaaaaaaa6tifnxn7uejjdx5btsgt6breq33y2tvtom7kgf75tkujpehbrha"
         fs.mkdir(output_path)
         done_shards = set()
     else:
@@ -183,6 +187,7 @@ def download(
         number_sample_per_shard,
         done_shards,
         tmp_path,
+        newlines_in_captions,
     )
 
     if output_format == "webdataset":
@@ -195,6 +200,8 @@ def download(
         sample_writer_class = TFRecordSampleWriter  # type: ignore
     elif output_format == "dummy":
         sample_writer_class = DummySampleWriter  # type: ignore
+    elif output_format == "mds":
+        sample_writer_class = MDSWriterWrapper
     else:
         raise ValueError(f"Invalid output format {output_format}")
 
@@ -255,9 +262,7 @@ def download(
         max_shard_retry,
     )
     logger_process.join()
-
-    if not hasattr(fs, "s3"):
-        fs.rm(tmp_dir, recursive=True)
+    #fs.rm(tmp_dir, recursive=True)
 
 
 def main():

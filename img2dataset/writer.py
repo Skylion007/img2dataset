@@ -20,7 +20,7 @@ class BufferedParquetWriter:
         fs, output_path = fsspec.core.url_to_fs(output_file)
 
         self.output_fd = fs.open(output_path, "wb")
-        self.parquet_writer = pq.ParquetWriter(self.output_fd, schema)
+        self.parquet_writer = pq.ParquetWriter(self.output_fd, schema, allow_truncated_timestamps=True, coerce_timestamps="us")
 
     def _initiatlize_buffer(self):
         self.current_buffer_size = 0
@@ -91,6 +91,81 @@ class ParquetSampleWriter:
     def close(self):
         self.buffered_parquet_writer.close()
 
+from streaming import MDSWriter, Stream, StreamingDataset
+
+
+class MDSWriterWrapper:
+    """ParquetSampleWriter is a image+caption writer to parquet"""
+
+    def __init__(
+        self,
+        shard_id,
+        output_folder,
+        save_caption,
+        oom_shard_count,
+        schema,
+        encode_format,
+    ):
+        self.oom_shard_count = oom_shard_count
+        self.encode_format = encode_format
+        #schema = schema.append(pa.field(encode_format, pa.binary()))
+        shard_name = "{shard_id:0{oom_shard_count}d}".format(  # pylint: disable=consider-using-f-string
+            shard_id=shard_id, oom_shard_count=oom_shard_count
+        )
+
+
+        column_names = [
+        'photo_video_identifier',
+        'user_nsid', 'user_nickname',
+        'title', 'user_tags', 'machine_tags',
+        'page_url', 'download_url', 'license_name',
+        'license_url', 'server_identifier', 'farm_identifier', 'secret',
+        'secret_original', 'extension_original', 'photo_video_marker'
+        ]
+
+        column_types = {column: 'str' for column in column_names}
+        column_types['photo_video_identifier'] = 'str'
+        column_types['date_taken'] = 'str'
+        column_types['date_uploaded'] = 'str'
+        column_types['longitude'] = 'float64'
+        column_types['latitude'] = 'float64'
+        column_types['accuracy'] = 'float64'
+        column_types['capture_device'] = 'str'
+        column_types['server_identifier'] = 'str'
+        column_types['farm_identifier'] = 'str'
+        column_types['photo_video_marker'] = 'int64'
+        column_types['machine_tags'] = 'str'
+        column_types['jpg'] = 'bytes'
+
+        output_file = f"{output_folder}/{shard_name}/"
+        self.buffered_parquet_writer = MDSWriter(out=output_file,
+                       columns=column_types,
+                       compression=None,
+                       hash=[],
+                       size_limit=256 * (2**20),
+                       msax_workers=128)
+        self.save_caption = save_caption
+
+    def write(self, img_str, key, caption, meta):
+        """Keep sample in memory then write to disk when close() is called"""
+        for k, value in meta.items():
+            if k in self.column_types and self.column_types[k] == 'str':
+                meta[k] = str(value)
+        if img_str is not None:
+            sample = {"key": key, self.encode_format: img_str}
+            if self.save_caption:
+                sample["txt"] = str(caption) if caption is not None else ""
+        else:
+            sample = {"key": key, self.encode_format: None}
+            if self.save_caption:
+                sample["txt"] = None
+        # new_meta_dict = {k:v if not k.startswith("date") else str(k):v
+        sample.update(meta)
+        #print(sample.keys())
+        self.buffered_parquet_writer.write(sample)
+
+    def close(self):
+        self.buffered_parquet_writer.finish()
 
 class WebDatasetSampleWriter:
     """WebDatasetSampleWriter is a image+caption writer to webdataset"""
